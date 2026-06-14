@@ -31,9 +31,6 @@ Outputs:
 - `result/diffs`: unified diffs between consecutive text files
 - `result/markdown/ocr.md`: Markdown view of all OCR snapshots
 
-## Fixtures
-
-The Playwright result videos copied from `hosting-manager-v2` live in `tests/fixtures/videos`.
 
 ## Development
 
