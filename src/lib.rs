@@ -10,7 +10,7 @@ const PIXEL_CHANGE_THRESHOLD: u8 = 24;
 #[derive(Debug, Clone, Parser, PartialEq)]
 #[command(
     name = "video-to-markdown",
-    about = "Extract stable OCR snapshots from a video and write text, diffs, and Markdown."
+    about = "Extract stable OCR changes from a video and write change-only Markdown."
 )]
 pub struct Options {
     pub video: PathBuf,
@@ -21,7 +21,7 @@ pub struct Options {
     #[arg(long, default_value = "deu")]
     pub lang: String,
 
-    #[arg(long, default_value = "result")]
+    #[arg(long, default_value = "result.md")]
     pub output: PathBuf,
 
     #[arg(long = "every-nth", default_value_t = 1, value_parser = parse_positive_usize)]
@@ -29,14 +29,6 @@ pub struct Options {
 
     #[arg(long = "max-motion", default_value_t = 100.0, value_parser = parse_percentage)]
     pub max_motion: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutputDirs {
-    pub frames_dir: PathBuf,
-    pub text_dir: PathBuf,
-    pub diff_dir: PathBuf,
-    pub markdown_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,15 +119,8 @@ pub fn normalize_text(text: &str) -> String {
         .join("\n")
 }
 
-pub fn get_output_dirs(output: impl AsRef<Path>) -> OutputDirs {
-    let output = output.as_ref();
-
-    OutputDirs {
-        frames_dir: output.join("frames"),
-        text_dir: output.join("text"),
-        diff_dir: output.join("diffs"),
-        markdown_dir: output.join("markdown"),
-    }
+pub fn get_markdown_path(output: impl AsRef<Path>) -> PathBuf {
+    output.as_ref().to_path_buf()
 }
 
 pub fn read_png_frame(path: impl AsRef<Path>) -> Result<RgbFrame> {
@@ -245,35 +230,65 @@ pub fn write_diffs(text_dir: impl AsRef<Path>, diff_dir: impl AsRef<Path>) -> Re
     Ok(())
 }
 
-pub fn write_markdown(
+pub fn write_change_markdown(
     text_dir: impl AsRef<Path>,
-    markdown_dir: impl AsRef<Path>,
+    markdown_path: impl AsRef<Path>,
     title: &str,
 ) -> Result<PathBuf> {
-    fs::create_dir_all(markdown_dir.as_ref())?;
+    let markdown_path = markdown_path.as_ref();
+
+    if let Some(parent) = markdown_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
 
     let mut files = text_files(text_dir.as_ref())?;
     files.sort();
 
-    let mut sections = vec![format!("# {title}")];
+    let mut sections = vec![
+        format!("# {title}"),
+        "Only OCR changes are shown. Unchanged frames are omitted.".to_string(),
+    ];
+    let mut previous_file = "empty.txt".to_string();
+    let mut previous_text = String::new();
 
     for file in files {
-        let text = fs::read_to_string(&file)
+        let current_text = fs::read_to_string(&file)
             .with_context(|| format!("Failed to read {}", file.display()))?;
-        let frame_name = file_stem(&file)?;
-        let body = if text.trim().is_empty() {
-            "_No text detected._".to_string()
-        } else {
-            text
-        };
+        let current_file = file_name(&file)?;
 
-        sections.push(format!("## {frame_name}\n\n{body}"));
+        if current_text == previous_text {
+            previous_file = current_file;
+            continue;
+        }
+
+        let patch = TextDiff::from_lines(&previous_text, &current_text)
+            .unified_diff()
+            .context_radius(3)
+            .header(&previous_file, &current_file)
+            .to_string();
+
+        if !patch.trim().is_empty() {
+            let frame_name = file_stem(&file)?;
+            sections.push(format!(
+                "## {frame_name}\n\n```diff\n{}\n```",
+                patch.trim_end()
+            ));
+        }
+
+        previous_file = current_file;
+        previous_text = current_text;
     }
 
-    let markdown_path = markdown_dir.as_ref().join("ocr.md");
-    fs::write(&markdown_path, format!("{}\n", sections.join("\n\n")))?;
+    if sections.len() == 2 {
+        sections.push("_No OCR changes detected._".to_string());
+    }
 
-    Ok(markdown_path)
+    fs::write(markdown_path, format!("{}\n", sections.join("\n\n")))?;
+
+    Ok(markdown_path.to_path_buf())
 }
 
 fn png_files(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -332,7 +347,7 @@ mod tests {
         assert_eq!(options.video, PathBuf::from("input.mp4"));
         assert_eq!(options.fps, "1");
         assert_eq!(options.lang, "deu");
-        assert_eq!(options.output, PathBuf::from("result"));
+        assert_eq!(options.output, PathBuf::from("result.md"));
         assert_eq!(options.every_nth, 1);
         assert_eq!(options.max_motion, 100.0);
     }
@@ -347,7 +362,7 @@ mod tests {
             "--lang",
             "eng",
             "--output",
-            "out",
+            "out.md",
             "--every-nth",
             "3",
             "--max-motion",
@@ -357,7 +372,7 @@ mod tests {
         assert_eq!(options.video, PathBuf::from("input.mp4"));
         assert_eq!(options.fps, "0.5");
         assert_eq!(options.lang, "eng");
-        assert_eq!(options.output, PathBuf::from("out"));
+        assert_eq!(options.output, PathBuf::from("out.md"));
         assert_eq!(options.every_nth, 3);
         assert_eq!(options.max_motion, 12.5);
     }
@@ -383,16 +398,8 @@ mod tests {
     }
 
     #[test]
-    fn returns_output_dirs() {
-        assert_eq!(
-            get_output_dirs("result"),
-            OutputDirs {
-                frames_dir: PathBuf::from("result/frames"),
-                text_dir: PathBuf::from("result/text"),
-                diff_dir: PathBuf::from("result/diffs"),
-                markdown_dir: PathBuf::from("result/markdown"),
-            }
-        );
+    fn returns_markdown_path() {
+        assert_eq!(get_markdown_path("result.md"), PathBuf::from("result.md"));
     }
 
     #[test]
@@ -487,21 +494,29 @@ mod tests {
     }
 
     #[test]
-    fn writes_markdown() -> Result<()> {
+    fn writes_change_only_markdown() -> Result<()> {
         let temp = tempdir()?;
         let text_dir = temp.path().join("text");
-        let markdown_dir = temp.path().join("markdown");
+        let markdown_path = temp.path().join("markdown").join("ocr.md");
 
         fs::create_dir(&text_dir)?;
-        fs::write(text_dir.join("frame_000001.txt"), "Login\nE-Mail")?;
-        fs::write(text_dir.join("frame_000002.txt"), "")?;
+        fs::write(text_dir.join("frame_000001.txt"), "")?;
+        fs::write(text_dir.join("frame_000002.txt"), "Login\nE-Mail\n")?;
+        fs::write(text_dir.join("frame_000003.txt"), "Login\nE-Mail\n")?;
+        fs::write(text_dir.join("frame_000004.txt"), "Login\nPassword\n")?;
 
-        let markdown_path = write_markdown(&text_dir, &markdown_dir, "video.webm")?;
-        let markdown = fs::read_to_string(markdown_path)?;
+        let written_path = write_change_markdown(&text_dir, &markdown_path, "video.webm")?;
+        let markdown = fs::read_to_string(written_path)?;
 
         assert!(markdown.contains("# video.webm"));
-        assert!(markdown.contains("## frame_000001\n\nLogin\nE-Mail"));
-        assert!(markdown.contains("## frame_000002\n\n_No text detected._"));
+        assert!(markdown.contains("Only OCR changes are shown"));
+        assert!(!markdown.contains("## frame_000001"));
+        assert!(markdown.contains("## frame_000002"));
+        assert!(!markdown.contains("## frame_000003"));
+        assert!(markdown.contains("## frame_000004"));
+        assert!(markdown.contains("+Login"));
+        assert!(markdown.contains("-E-Mail"));
+        assert!(markdown.contains("+Password"));
         Ok(())
     }
 

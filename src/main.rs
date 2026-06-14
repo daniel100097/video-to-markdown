@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::{TempDir, tempdir};
 use video_to_markdown::{
-    FrameSelectionOptions, Options, get_output_dirs, normalize_text, select_frames_for_ocr,
-    write_diffs, write_markdown,
+    FrameSelectionOptions, Options, get_markdown_path, normalize_text, select_frames_for_ocr,
+    write_change_markdown, write_diffs,
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -34,15 +34,19 @@ fn main() {
 }
 
 fn run(options: Options) -> Result<()> {
-    let output_dirs = get_output_dirs(&options.output);
+    let markdown_path = get_markdown_path(&options.output);
+    let workspace = tempdir()?;
+    let frames_dir = workspace.path().join("frames");
+    let text_dir = workspace.path().join("text");
+    let diff_dir = workspace.path().join("diffs");
 
-    println!("Extrahiere Frames mit ffmpeg...");
-    extract_frames(&options.video, &output_dirs.frames_dir, &options.fps)?;
+    println!("Extracting frames with embedded ffmpeg...");
+    extract_frames(&options.video, &frames_dir, &options.fps)?;
 
-    println!("Extrahiere Text mit eingebetteter OCR...");
+    println!("Extracting text with embedded OCR...");
     extract_text_from_frames(
-        &output_dirs.frames_dir,
-        &output_dirs.text_dir,
+        &frames_dir,
+        &text_dir,
         &options.lang,
         FrameSelectionOptions {
             every_nth: options.every_nth,
@@ -50,13 +54,13 @@ fn run(options: Options) -> Result<()> {
         },
     )?;
 
-    println!("Erzeuge Diffs...");
-    write_diffs(&output_dirs.text_dir, &output_dirs.diff_dir)?;
+    println!("Writing temporary diffs...");
+    write_diffs(&text_dir, &diff_dir)?;
 
-    println!("Erzeuge Markdown...");
-    let markdown_path = write_markdown(
-        &output_dirs.text_dir,
-        &output_dirs.markdown_dir,
+    println!("Writing change-only Markdown...");
+    let written_markdown_path = write_change_markdown(
+        &text_dir,
+        &markdown_path,
         &options
             .video
             .file_name()
@@ -64,11 +68,9 @@ fn run(options: Options) -> Result<()> {
             .to_string_lossy(),
     )?;
 
-    println!("Fertig.");
-    println!("Frames: {}", output_dirs.frames_dir.display());
-    println!("Texte:  {}", output_dirs.text_dir.display());
-    println!("Diffs:  {}", output_dirs.diff_dir.display());
-    println!("Markdown: {}", markdown_path.display());
+    println!("Done.");
+    println!("Temporary workspace: {}", workspace.path().display());
+    println!("Markdown: {}", written_markdown_path.display());
 
     Ok(())
 }
@@ -115,7 +117,7 @@ fn extract_text_from_frames(
     let engine = embedded_ocr_engine()?;
     let frames = select_frames_for_ocr(frames_dir, selection_options)?;
 
-    println!("OCR-Frames: {}", frames.len());
+    println!("OCR frames: {}", frames.len());
 
     for frame in frames {
         let frame_path = frames_dir.join(&frame.file);
