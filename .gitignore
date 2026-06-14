@@ -1,0 +1,8 @@
+node_modules/
+result/
+coverage/
+.tmp-*/
+*.traineddata
+.DS_Store
+tests/fixtures/videos/
+.history/
