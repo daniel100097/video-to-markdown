@@ -1,0 +1,16 @@
+[package]
+name = "video-to-markdown"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ocrs = "0.12.2"
+rten = "0.24.0"
+similar = "2.7"
+tempfile = "3.14"
+
+[dev-dependencies]

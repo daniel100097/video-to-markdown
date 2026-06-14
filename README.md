@@ -1,23 +1,25 @@
 # Video to Markdown
 
-Extract frames from a video with ffmpeg, run OCR on each stable frame with Tesseract, and write unified diffs between consecutive OCR snapshots.
+Rust CLI that extracts frames from a video with embedded `ffmpeg`, runs OCR with embedded OCR models, and writes text, diffs, and Markdown.
 
 ## Setup
 
 ```sh
-bun install
+cargo build --release
 ```
+
+The release binary embeds the required ffmpeg binary and OCR model files. No external `ffmpeg`, `tesseract`, or Tesseract language data is required at runtime.
 
 ## Usage
 
 ```sh
-bun run start ./video.mp4 --fps 1 --lang deu --output result --every-nth 1 --max-motion 100
+target/release/video-to-markdown ./video.mp4 --fps 1 --lang deu --output result --every-nth 1 --max-motion 100
 ```
 
 Options:
 
 - `--fps`: frame extraction rate before filtering
-- `--lang`: Tesseract language code
+- `--lang`: accepted for CLI compatibility; the embedded OCR engine does not load external language data
 - `--output`: output directory
 - `--every-nth`: OCR only every nth stable frame
 - `--max-motion`: maximum changed screen area in percent between consecutive frames
@@ -36,6 +38,6 @@ The Playwright result videos copied from `hosting-manager-v2` live in `tests/fix
 ## Development
 
 ```sh
-bun test
-bun run typecheck
+cargo test
+cargo build --release
 ```
